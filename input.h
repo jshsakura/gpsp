@@ -76,6 +76,10 @@ extern unsigned turbo_b_counter;
 void init_input(void);
 u32 update_input(void);
 
+/* Latch the pad directly (non-libretro front-ends). Bit set = pressed, GBA order:
+ * A B Sel Start Right Left Up Down R L. */
+void gba_set_keys(u32 keys);
+
 bool input_check_savestate(const u8 *src);
 unsigned input_write_savestate(u8* dst);
 bool input_read_savestate(const u8 *src);

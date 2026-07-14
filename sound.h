@@ -25,7 +25,12 @@
 #endif
 #define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
 
+/* The rate the mixer runs at. Nothing here assumes a power of two, so a target
+ * whose audio hardware wants a particular rate can just say so and skip a
+ * resampling pass it has no cycles for. */
+#ifndef GBA_SOUND_FREQUENCY
 #define GBA_SOUND_FREQUENCY   (64 * 1024)
+#endif
 
 #ifdef OVERCLOCK_60FPS
   #define GBC_BASE_RATE ((float)(60 * 228 * (272+960)))

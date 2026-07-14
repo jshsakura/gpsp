@@ -156,11 +156,7 @@ u32 update_input(void)
       gbp_keypad_sent = false;
    }
 
-   if ((new_key | old_key) != old_key)
-      trigger_key(new_key);
-
-   old_key = new_key;
-   write_ioreg(REG_P1, (~old_key) & 0x3FF);
+   gba_set_keys(new_key);
 
    /* Handle fast forward button */
    if (libretro_ff_enabled != libretro_ff_enabled_prev)
@@ -212,3 +208,18 @@ unsigned input_write_savestate(u8 *dst)
   return (unsigned int)(dst - startp);
 }
 
+
+
+/* Front-ends that are not libretro own their own input. This is update_input()'s
+ * tail, which is the part that actually touches the machine: latch the pad into
+ * KEYINPUT, and raise the keypad interrupt on a fresh press — a game halted in
+ * VBlankIntrWait with keypad IRQs armed is waiting for exactly that. */
+void gba_set_keys(u32 keys)
+{
+   keys &= 0x3FF;
+   if ((keys | old_key) != old_key)
+      trigger_key(keys);
+
+   old_key = keys;
+   write_ioreg(REG_P1, (~old_key) & 0x3FF);
+}
