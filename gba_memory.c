@@ -1248,6 +1248,18 @@ typedef enum
 
 static bool rtc_enabled = false, rumble_enabled = false;
 
+/* Did the cart end up with a working clock?
+ *
+ * A front-end can force this off through load_gamepak's force_rtc argument, and 0
+ * there means FEAT_DISABLE rather than "no opinion" — an easy thing to pass by
+ * accident, and nothing notices. The game boots, plays, and only says so hours later:
+ * Pokemon reports that its internal battery has run dry, which is exactly what a cart
+ * with no clock looks like. So let a front-end (and its tests) ask. */
+bool gba_rtc_is_enabled(void)
+{
+  return rtc_enabled;
+}
+
 // I/O registers (for RTC, rumble, etc)
 u8 gpio_regs[3];
 

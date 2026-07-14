@@ -259,6 +259,7 @@ u8 *load_gamepak_page(u32 physical_index);
 /* Hand the core a ROM that is already in the CPU's address space (memory-mapped
  * flash). Call before load_gamepak(); it turns off ROM paging entirely. */
 void gba_set_xip_rom(u8 *base, u32 size);
+bool gba_rtc_is_enabled(void);
 
 /* Savestate without the bulk buffers; the caller streams those itself. */
 unsigned memory_write_savestate_slim(u8 *dst);
