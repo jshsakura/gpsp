@@ -994,6 +994,51 @@ static const ini_t gbaover[] = {
       0,                           /* translation_gate_target_3 */
    },
    {
+      // Pokemon Emerald (Korean fan translation)
+      "BPEK",                      /* gamepak_code         */
+      FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_RFU,
+      0x80008ce,                   /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Pokemon Ruby (Korean fan translation)
+      "AXVK",                      /* gamepak_code         */
+      FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_SERIAL_POKE,
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Pokemon Sapphire (Korean fan translation)
+      "AXPK",                      /* gamepak_code         */
+      FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_SERIAL_POKE,
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Pokemon Fire Red (Korean fan translation)
+      "BPRK",                      /* gamepak_code         */
+      FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_RFU,
+      0x80008b2,                   /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Pokemon Leaf Green (Korean fan translation)
+      "BPGK",                      /* gamepak_code         */
+      FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_RFU,
+      0x80008b2,                   /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
       // Pokemon Emerald (E/U)
       "BPEE",                      /* gamepak_code         */
       FLAGS_FLASH_128KB | FLAGS_RTC | FLAGS_SERIAL | FLAGS_RFU,
