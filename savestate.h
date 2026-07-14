@@ -97,6 +97,21 @@ bool bson_read_bytes(const u8 *srcp, const char *key, void* buffer, unsigned cnt
 
 /* this is an upper limit, leave room for future (?) stuff */
 #define GBA_STATE_MEM_SIZE                    (416*1024)
+
+/* The same state with the six bulk buffers (iwram/ewram/vram/oam/palette/ioregs,
+ * ~390KB of it) left out, for a host that cannot hold the whole document. It
+ * streams those buffers to storage itself — see gba_bulk_regions() — and only
+ * keeps this part, which is a few kilobytes. */
+#define GBA_STATE_SLIM_SIZE                   (32*1024)
+
+typedef struct {
+  void     *ptr;
+  unsigned  len;
+} gba_bulk_region_t;
+
+const gba_bulk_region_t *gba_bulk_regions(unsigned *count);
+void gba_save_state_slim(void *dst);
+bool gba_load_state_slim(const void *src);
 #define GBA_STATE_MAGIC                       0x06BAC0DE
 #define GBA_STATE_VERSION                     0x00010004
 

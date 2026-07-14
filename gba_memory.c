@@ -2430,7 +2430,7 @@ void memory_term(void)
   gamepak_mini_materialized = false;
 }
 
-bool memory_check_savestate(const u8 *src)
+static bool memory_check_savestate_common(const u8 *src, bool with_bulk)
 {
   static const char *vars32[] = {
     "backup-type","flash-mode", "flash-cmd-pos", "flash-bank-num", "flash-dev-id",
@@ -2449,13 +2449,15 @@ bool memory_check_savestate(const u8 *src)
     return false;
 
   // Check memory buffers (TODO: check sizes!)
-  if (!bson_contains_key(memdoc, "iwram", BSON_TYPE_BIN) ||
+  if (with_bulk &&
+     (!bson_contains_key(memdoc, "iwram", BSON_TYPE_BIN) ||
       !bson_contains_key(memdoc, "ewram", BSON_TYPE_BIN) ||
       !bson_contains_key(memdoc, "vram", BSON_TYPE_BIN) ||
       !bson_contains_key(memdoc, "oamram", BSON_TYPE_BIN) ||
       !bson_contains_key(memdoc, "palram", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "ioregs", BSON_TYPE_BIN) ||
-      !bson_contains_key(memdoc, "dma-bus", BSON_TYPE_INT32))
+      !bson_contains_key(memdoc, "ioregs", BSON_TYPE_BIN)))
+     return false;
+  if (!bson_contains_key(memdoc, "dma-bus", BSON_TYPE_INT32))
      return false;
 
   // Check backup variables
@@ -2482,7 +2484,7 @@ bool memory_check_savestate(const u8 *src)
 }
 
 
-bool memory_read_savestate(const u8 *src)
+static bool memory_read_savestate_common(const u8 *src, bool with_bulk)
 {
   int i;
   u32 rtc_data_array[2];
@@ -2492,13 +2494,16 @@ bool memory_read_savestate(const u8 *src)
   if (!memdoc || !bakdoc || !dmadoc)
     return false;
 
-  if (!(
+  if (with_bulk && !(
     bson_read_bytes(memdoc, "iwram", &iwram[GBA_IWRAM_OFF], 0x8000) &&
     bson_read_bytes(memdoc, "ewram", ewram, 0x40000) &&
     bson_read_bytes(memdoc, "vram", vram, sizeof(vram)) &&
     bson_read_bytes(memdoc, "oamram", oam_ram, sizeof(oam_ram)) &&
     bson_read_bytes(memdoc, "palram", palette_ram, sizeof(palette_ram)) &&
-    bson_read_bytes(memdoc, "ioregs", io_registers, sizeof(io_registers)) &&
+    bson_read_bytes(memdoc, "ioregs", io_registers, sizeof(io_registers))))
+    return false;
+
+  if (!(
     bson_read_int32(memdoc, "dma-bus", &dma_bus_val) &&
 
     bson_read_int32(bakdoc, "backup-type", &backup_type) &&
@@ -2557,19 +2562,45 @@ bool memory_read_savestate(const u8 *src)
   return true;
 }
 
-unsigned memory_write_savestate(u8 *dst)
+bool memory_read_savestate(const u8 *src)        { return memory_read_savestate_common(src, true); }
+bool memory_read_savestate_slim(const u8 *src)   { return memory_read_savestate_common(src, false); }
+bool memory_check_savestate(const u8 *src)       { return memory_check_savestate_common(src, true); }
+bool memory_check_savestate_slim(const u8 *src)  { return memory_check_savestate_common(src, false); }
+
+/* The six buffers that make a savestate 400KB. Everything else in the document
+ * is counted in bytes. A host with RAM to spare keeps them inside the document;
+ * a microcontroller cannot hold that document at all, so it streams them
+ * straight to storage (gba_bulk_regions) and keeps only the small state in RAM. */
+static const gba_bulk_region_t bulk_regions[] = {
+  { &iwram[GBA_IWRAM_OFF], 0x8000                  },
+  { ewram,                 0x40000                 },
+  { vram,                  sizeof(vram)            },
+  { oam_ram,               sizeof(oam_ram)         },
+  { palette_ram,           sizeof(palette_ram)     },
+  { io_registers,          sizeof(io_registers)    },
+};
+
+const gba_bulk_region_t *gba_bulk_regions(unsigned *count)
+{
+  *count = sizeof(bulk_regions) / sizeof(bulk_regions[0]);
+  return bulk_regions;
+}
+
+static unsigned memory_write_savestate_common(u8 *dst, bool with_bulk)
 {
   int i;
   u8 *wbptr, *wbptr2, *startp = dst;
   u32 rtc_data_array[2] = { (u32)rtc_data, (u32)(rtc_data >> 32) };
 
   bson_start_document(dst, "memory", wbptr);
-  bson_write_bytes(dst, "iwram", &iwram[GBA_IWRAM_OFF], 0x8000);
-  bson_write_bytes(dst, "ewram", ewram, 0x40000);
-  bson_write_bytes(dst, "vram", vram, sizeof(vram));
-  bson_write_bytes(dst, "oamram", oam_ram, sizeof(oam_ram));
-  bson_write_bytes(dst, "palram", palette_ram, sizeof(palette_ram));
-  bson_write_bytes(dst, "ioregs", io_registers, sizeof(io_registers));
+  if (with_bulk) {
+    bson_write_bytes(dst, "iwram", &iwram[GBA_IWRAM_OFF], 0x8000);
+    bson_write_bytes(dst, "ewram", ewram, 0x40000);
+    bson_write_bytes(dst, "vram", vram, sizeof(vram));
+    bson_write_bytes(dst, "oamram", oam_ram, sizeof(oam_ram));
+    bson_write_bytes(dst, "palram", palette_ram, sizeof(palette_ram));
+    bson_write_bytes(dst, "ioregs", io_registers, sizeof(io_registers));
+  }
   bson_write_int32(dst, "dma-bus", dma_bus_val);
   bson_finish_document(dst, wbptr);
 
@@ -2623,6 +2654,9 @@ unsigned memory_write_savestate(u8 *dst)
 
   return (unsigned int)(dst - startp);
 }
+
+unsigned memory_write_savestate(u8 *dst)      { return memory_write_savestate_common(dst, true); }
+unsigned memory_write_savestate_slim(u8 *dst) { return memory_write_savestate_common(dst, false); }
 
 static s32 load_gamepak_raw(const char *name)
 {

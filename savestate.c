@@ -163,6 +163,60 @@ bool gba_load_state(const void* src)
   return true;
 }
 
+/* The bulk buffers are the caller's problem in slim mode: it has already
+ * written (or is about to write) them wherever it keeps them. */
+void gba_save_state_slim(void* dst)
+{
+  u8 *stptr = (u8*)dst;
+  u8 *wrptr = (u8*)dst;
+
+  bson_write_u32(wrptr, 0);
+  bson_write_int32(wrptr, "info-magic", GBA_STATE_MAGIC);
+  bson_write_int32(wrptr, "info-version", GBA_STATE_VERSION);
+
+  wrptr += cpu_write_savestate(wrptr);
+  wrptr += input_write_savestate(wrptr);
+  wrptr += main_write_savestate(wrptr);
+  wrptr += memory_write_savestate_slim(wrptr);
+  wrptr += sound_write_savestate(wrptr);
+
+  *wrptr++ = 0;
+  bson_write_u32(stptr, wrptr - stptr);
+}
+
+bool gba_load_state_slim(const void* src)
+{
+  u32 i, tmp;
+  u8* srcptr = (u8*)src;
+
+  if (!bson_read_int32(srcptr, "info-magic", &tmp) || tmp != GBA_STATE_MAGIC)
+    return false;
+  if (!bson_read_int32(srcptr, "info-version", &tmp) || tmp != GBA_STATE_VERSION)
+    return false;
+
+  if (!cpu_check_savestate(srcptr) ||
+      !input_check_savestate(srcptr) ||
+      !main_check_savestate(srcptr) ||
+      !memory_check_savestate_slim(srcptr) ||
+      !sound_check_savestate(srcptr))
+     return false;
+
+  if (!(cpu_read_savestate(srcptr) &&
+        input_read_savestate(srcptr) &&
+        main_read_savestate(srcptr) &&
+        memory_read_savestate_slim(srcptr) &&
+        sound_read_savestate(srcptr)))
+     return false;
+
+  /* The palette cache is derived, not stored: a load restores state, not the
+   * tables built from it. Rebuild it or the screen draws the scene you loaded
+   * in the colours of the one you left. */
+  for(i = 0; i < 512; i++)
+     palette_ram_converted[i] = convert_palette(eswap16(palette_ram[i]));
+
+  return true;
+}
+
 void gba_save_state(void* dst)
 {
   u8 *stptr = (u8*)dst;
