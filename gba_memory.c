@@ -352,6 +352,34 @@ dma_transfer_type dma[4];
 // ROMs up to 32MB, but we might fail on memory constrained systems.
 
 u8 *gamepak_buffers[32];    /* Pointers to malloc'ed blocks */
+
+/* XIP: the cart is already in the address space.
+ *
+ * A microcontroller with the ROM in memory-mapped NOR flash has nothing to page
+ * in and nowhere to page it to — the 32KB block swapping below exists to fit a
+ * 32MB cart into a few MB of RAM, and there is no RAM here to fit it into. The
+ * read map points straight at the flash instead.
+ *
+ * Page 0 is the one exception. An RTC or rumble cart exposes its GPIO registers
+ * at 0x080000C4-0x080000C9, and update_gpio_romregs() *writes* the live values
+ * there so the game can read them back out of "ROM". Flash does not take
+ * writes, so page 0 gets a RAM shadow and everything above it is read directly
+ * from the flash. Pokemon needs this: all of Ruby, Sapphire and Emerald keep
+ * time through those three registers. */
+u8 *gamepak_xip_base = NULL;
+u32 gamepak_xip_size = 0;
+static u8 gamepak_page0_shadow[32 * 1024];
+
+void gba_set_xip_rom(u8 *base, u32 size)
+{
+  gamepak_xip_base = base;
+  gamepak_xip_size = size;
+}
+
+static const u8 *gamepak_header(void)
+{
+  return gamepak_xip_base ? gamepak_xip_base : gamepak_buffers[0];
+}
 u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 u32 gamepak_file_blocks;    /* Physical payload size in 32KB blocks */
@@ -2235,6 +2263,15 @@ static u32 evict_gamepak_page(void)
 u8 *load_gamepak_page(u32 physical_index)
 {
   u32 rom_blocks = gamepak_size >> 15;
+
+  if (gamepak_xip_base)
+  {
+    if (rom_blocks && physical_index >= rom_blocks)
+      physical_index %= rom_blocks;
+    return physical_index == 0 ? gamepak_page0_shadow
+                               : &gamepak_xip_base[32 * 1024 * physical_index];
+  }
+
   if (rom_blocks == 0)
     return &gamepak_buffers[0][0];
 
@@ -2274,6 +2311,9 @@ u8 *load_gamepak_page(u32 physical_index)
 
 void init_gamepak_buffer(void)
 {
+  if (gamepak_xip_base)
+    return;   /* the ROM is already in the address space; nothing to buffer */
+
   unsigned i;
   // Try to allocate up to 32 blocks of 1MB each
   gamepak_buffer_count = 0;
@@ -2589,6 +2629,30 @@ static s32 load_gamepak_raw(const char *name)
   unsigned i, j;
   u32 raw_size;
   int64_t fsize;
+
+  if (gamepak_xip_base)
+  {
+    u32 phyn;
+    raw_size = (gamepak_xip_size + 0x7FFF) & ~0x7FFF;
+    gamepak_file_blocks = raw_size >> 15;
+    gamepak_mirror_1m = false;
+    gamepak_size = raw_size;
+
+    memcpy(gamepak_page0_shadow, gamepak_xip_base,
+           gamepak_xip_size < sizeof(gamepak_page0_shadow) ?
+             gamepak_xip_size : sizeof(gamepak_page0_shadow));
+
+    map_null(read, 0x8000000, 0xD000000);
+    for (phyn = 0; phyn < gamepak_file_blocks; phyn++)
+    {
+      u8 *blkptr = phyn == 0 ? gamepak_page0_shadow
+                             : &gamepak_xip_base[32 * 1024 * phyn];
+      map_rom_entry(read, phyn, blkptr, gamepak_file_blocks);
+    }
+    update_gpio_romregs();
+    return 0;
+  }
+
   gamepak_file_large = filestream_open(name, RETRO_VFS_FILE_ACCESS_READ,
                                        RETRO_VFS_FILE_ACCESS_HINT_NONE);
   if(gamepak_file_large)
@@ -2873,13 +2937,13 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    if (load_gamepak_raw(name))
       return -1;
 
-   gamepak_header_nonstandard =
-      (gamepak_buffers[0][3] != 0xEA) || (gamepak_buffers[0][0xB2] != 0x96);
+   const u8 *hdr = gamepak_header();
+   gamepak_header_nonstandard = (hdr[3] != 0xEA) || (hdr[0xB2] != 0x96);
 
    /* Buffer 0 always has the first 1MB chunk of the ROM.
     * Read game code regardless of header validity: ROM hacks usually
     * preserve the code at 0xAC even when other header bytes are wrong. */
-   memcpy(game_code, &gamepak_buffers[0][0xAC], 4);
+   memcpy(game_code, &hdr[0xAC], 4);
 
    /* Sanitise game code: if all bytes are non-alphanumeric
     * (homebrews, some NSP-extracted ROMs), use "UNKN" so

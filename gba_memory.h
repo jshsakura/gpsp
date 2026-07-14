@@ -256,6 +256,11 @@ bool gamepak_must_swap(void);
 void memory_term(void);
 u8 *load_gamepak_page(u32 physical_index);
 
+/* Hand the core a ROM that is already in the CPU's address space (memory-mapped
+ * flash). Call before load_gamepak(); it turns off ROM paging entirely. */
+void gba_set_xip_rom(u8 *base, u32 size);
+extern u8 *gamepak_xip_base;
+
 extern u32 oam_update;
 extern u32 gbc_sound_wave_update;
 extern dma_transfer_type dma[DMA_CHAN_CNT];
