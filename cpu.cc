@@ -3197,7 +3197,43 @@ m4a_resume:
         * for every instruction it ran, including the last one's. */
 #endif
 
-       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
+       /* idle_loop_cond: ALWAYS is the classic semantic. WHEN_NE parks on a
+        * poll's closing branch and burns the slice only while the compare says
+        * it will loop — see cpu.h for the caller shape that demands this. The
+        * extra test costs nothing: it is only evaluated on a pc match. */
+       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0 &&
+           (idle_loop_cond == IDLE_COND_ALWAYS || z_flag == 0))
+          cycles_remaining = 0;
+
+#ifdef IDLE_SKIP_TRACE
+       /* Host-only forensics: what does the parked loop actually observe, and
+        * does it ever get OUT? Exit = the `mov pc, lr` right after the loop. */
+       if (reg[REG_PC] == idle_loop_target_pc) {
+          extern u16 io_registers[512];
+          static unsigned long fires;
+          if ((fires++ & 0x3FF) == 0)
+             fprintf(stderr, "SKIP fire#%lu vcount=%u exec_cycles=%u rem=%d r0=%08x\n",
+                     fires - 1, io_registers[3], execute_cycles, cycles_remaining, reg[0]);
+       }
+       /* The moment of truth: the loop just read 160 — trace the next six
+        * instructions' PCs unconditionally. Either we see it fall through to
+        * the return, or we see exactly where the exit is denied. */
+       {
+          static int arm_after = 0;
+          static int bursts = 0;
+          if (idle_loop_target_pc != 0xFFFFFFFF &&
+              reg[REG_PC] == idle_loop_target_pc + 4u &&
+              reg[0] == 160u && arm_after == 0 && bursts < 4) {
+             arm_after = 6; bursts++;
+             fprintf(stderr, "-- read 160, tracing:\n");
+          }
+          if (arm_after > 0) {
+             fprintf(stderr, "   pc=%08x r0=%u cyc_rem=%d\n",
+                     reg[REG_PC], reg[0], cycles_remaining);
+             arm_after--;
+          }
+       }
+#endif
 
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
          goto alert;
@@ -3680,7 +3716,10 @@ thumb_loop:
        /* End of Execute THUMB instruction */
        cycles_remaining -= ws_cyc_seq[(reg[REG_PC] >> 24) & 0xF][0];
 
-       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
+       /* Same conditional-skip semantic as the ARM side above. */
+       if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0 &&
+           (idle_loop_cond == IDLE_COND_ALWAYS || z_flag == 0))
+          cycles_remaining = 0;
 
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
           goto alert;

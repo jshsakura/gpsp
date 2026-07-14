@@ -3057,6 +3057,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    }
 
    idle_loop_target_pc = 0xFFFFFFFF;
+   idle_loop_cond = IDLE_COND_ALWAYS;
    translation_gate_targets = 0;
    flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
    flash_bank_cnt = FLASH_SIZE_64KB;
