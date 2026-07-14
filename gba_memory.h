@@ -268,8 +268,38 @@ extern u16 io_registers[512];
 extern u8 vram[1024 * 96];
 extern u8 bios_rom[1024 * 16];
 // Double buffer used for SMC detection
-extern u8 ewram[1024 * 256 * 2];
-extern u8 iwram[1024 * 32 * 2];
+/* The upper half of ewram is the dynamic recompiler's tag area; only
+ * cpu_threaded.c ever reads or writes it. Interpreter-only builds (every
+ * platform without a dynarec backend, which includes Cortex-M) can drop it. */
+#if defined(HAVE_DYNAREC) || defined(GNW_KEEP_EWRAM)
+#define GBA_EWRAM_ALLOC (1024 * 256 * 2)
+#else
+#define GBA_EWRAM_ALLOC (1024 * 256)
+#endif
+extern u8 ewram[GBA_EWRAM_ALLOC];
+/* Same story as ewram: the emulated IWRAM lives in the *upper* half and the
+ * lower half is the dynarec's tag area, which is why every access below goes
+ * through GBA_IWRAM_OFF rather than the base of the array. Without a dynarec
+ * there is nothing to tag, so the array is just the 32KB the GBA actually has. */
+#if defined(HAVE_DYNAREC) || defined(GNW_KEEP_IWRAM)
+#define GBA_IWRAM_ALLOC (1024 * 32 * 2)
+#define GBA_IWRAM_OFF   0x8000
+#else
+#define GBA_IWRAM_ALLOC (1024 * 32)
+#define GBA_IWRAM_OFF   0
+#endif
+extern u8 iwram[GBA_IWRAM_ALLOC];
+
+/* The dynarec tags the words a DMA overwrote so it can throw away any code it
+ * had translated from them. Interpreters translate nothing, so the tag areas —
+ * and the check that reads them — only exist when there is a dynarec. */
+#ifdef HAVE_DYNAREC
+#define GBA_EWRAM_TAG_OFF 0x40000
+#define GBA_SMC_CHECK(expr) if (expr) alerts |= CPU_ALERT_SMC;
+#else
+#define GBA_EWRAM_TAG_OFF 0
+#define GBA_SMC_CHECK(expr)
+#endif
 
 extern u8 *memory_map_read[8 * 1024];
 

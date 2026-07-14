@@ -996,7 +996,19 @@ static const u8 obj_dim_table[3][4][2] = {
   { {8, 16}, {8, 32}, {16, 32}, {32, 64} }
 };
 
-static u8 obj_priority_list[5][160][128];
+/* One slot per OAM entry per priority per line. That is 100KB, which a console
+ * with a megabyte of RAM will not miss and a microcontroller very much will.
+ *
+ * The list is only ever filled up to the hardware's per-line OBJ cycle budget,
+ * so a smaller bound costs nothing until a line genuinely asks for more sprites
+ * than the bound allows — and then it drops the last ones, which is what the
+ * hardware does too. It is a *bound*, though, and the fill loop below never
+ * checked it: at [128] it was safe only because there are 128 OAM entries.
+ * Anything smaller needs the check, so the check is now there. */
+#ifndef OBJ_PER_LINE_MAX
+#define OBJ_PER_LINE_MAX 128
+#endif
+static u8 obj_priority_list[5][160][OBJ_PER_LINE_MAX];
 static u8 obj_priority_count[5][160];
 static u8 obj_alpha_count[160];
 
@@ -1630,8 +1642,8 @@ static void order_obj(u32 video_mode)
         case OBJ_MOD_SEMITRAN:
           for(row = starty; row < endy; row++)
           {
-            if (rend_cycles[row] < max_rend_cycles) {
-              u32 cur_cnt = obj_priority_count[obj_priority][row];
+            u32 cur_cnt = obj_priority_count[obj_priority][row];
+            if (rend_cycles[row] < max_rend_cycles && cur_cnt < OBJ_PER_LINE_MAX) {
               obj_priority_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
               rend_cycles[row] += cyccnt;
@@ -1647,8 +1659,8 @@ static void order_obj(u32 video_mode)
           // Add the object to the list.
           for(row = starty; row < endy; row++)
           {
-            if (rend_cycles[row] < max_rend_cycles) {
-              u32 cur_cnt = obj_priority_count[obj_priority][row];
+            u32 cur_cnt = obj_priority_count[obj_priority][row];
+            if (rend_cycles[row] < max_rend_cycles && cur_cnt < OBJ_PER_LINE_MAX) {
               obj_priority_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
               rend_cycles[row] += cyccnt;
