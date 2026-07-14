@@ -2799,21 +2799,11 @@ static s32 load_gamepak_raw(const char *name)
   return -1;
 }
 
-static bool rom_has_signature(const u8 *rom, u32 rom_size, const char *sig)
-{
-  u32 i;
-  u32 sig_len = (u32)strlen(sig);
-  if (rom_size < sig_len)
-    return false;
-
-  for (i = 0; i + sig_len <= rom_size; i++)
-  {
-    if (memcmp(&rom[i], sig, sig_len) == 0)
-      return true;
-  }
-
-  return false;
-}
+/* A front-end with a watchdog overrides this. The scan below walks a megabyte of
+ * cart, and on a memory-mapped (XIP) build that is a megabyte of QSPI reads —
+ * long enough on a microcontroller for a window watchdog to reset the machine
+ * mid-scan, with no fault and nothing on screen to say why. */
+__attribute__((weak)) void gba_scan_yield(void) { }
 
 enum
 {
@@ -2909,13 +2899,68 @@ static void normalize_blank_backup_for_detected_type(void)
     memset(gamepak_backup, 0xFF, size);
 }
 
+/* Every save-type signature, in ONE pass.
+ *
+ * This used to be five calls to a rom_has_signature() that ran memcmp at every
+ * byte offset of a megabyte — 5.2 million memcmps, each reading the cart. When the
+ * cart is buffered in RAM that is merely wasteful. When it is memory-mapped in
+ * QSPI flash it is seconds, which on the Game & Watch is many times the watchdog
+ * window: the machine reset mid-scan and dropped the player back to the game list,
+ * with no fault, no message, and nothing to suggest the emulator had ever started.
+ *
+ * One pass, gated on the first byte (the signatures all start with a distinct
+ * letter), so the common case is a byte compare and the memcmp is rare. The stride
+ * stays 1: gpSP's in-memory scanner assumes the signatures are 4-byte aligned, and
+ * they usually are, but a cart where they are not would silently get the wrong save
+ * type — and a wrong save type is a player losing a save file. Not worth the speed;
+ * the first-byte gate already buys back the cost.
+ */
+static u32 rom_scan_signatures(const u8 *rom, u32 rom_size)
+{
+  u32 found = 0;
+  u32 i;
+
+  if (rom == NULL || rom_size < 10)
+    return 0;
+
+  for (i = 0; i + 10 <= rom_size; i++)
+  {
+    switch (rom[i])
+    {
+      case 'E':
+        if (!(found & ROM_SIG_EEPROM) && memcmp(&rom[i], "EEPROM_V", 8) == 0)
+          found |= ROM_SIG_EEPROM;
+        break;
+      case 'S':
+        if (!(found & ROM_SIG_SRAM) && memcmp(&rom[i], "SRAM_V", 6) == 0)
+          found |= ROM_SIG_SRAM;
+        break;
+      case 'F':
+        if (!(found & ROM_SIG_FLASH1M) && memcmp(&rom[i], "FLASH1M_V", 9) == 0)
+          found |= ROM_SIG_FLASH1M;
+        else if (!(found & ROM_SIG_FLASH5) &&
+                 (memcmp(&rom[i], "FLASH512_V", 10) == 0 ||
+                  memcmp(&rom[i], "FLASH_V", 7) == 0))
+          found |= ROM_SIG_FLASH5;
+        break;
+      default:
+        break;
+    }
+
+    if ((i & 0xFFFF) == 0)
+      gba_scan_yield();
+  }
+
+  return found;
+}
+
 static void detect_backup_subcircuit(const u8 *rom, u32 rom_size)
 {
-  bool has_eeprom = rom_has_signature(rom, rom_size, "EEPROM_V");
-  bool has_sram = rom_has_signature(rom, rom_size, "SRAM_V");
-  bool has_flash1m = rom_has_signature(rom, rom_size, "FLASH1M_V");
-  bool has_flash5 = rom_has_signature(rom, rom_size, "FLASH512_V") ||
-                    rom_has_signature(rom, rom_size, "FLASH_V");
+  u32 sigs = rom_scan_signatures(rom, rom_size);
+  bool has_eeprom  = (sigs & ROM_SIG_EEPROM)  != 0;
+  bool has_sram    = (sigs & ROM_SIG_SRAM)    != 0;
+  bool has_flash1m = (sigs & ROM_SIG_FLASH1M) != 0;
+  bool has_flash5  = (sigs & ROM_SIG_FLASH5)  != 0;
   u32 file_sigs = 0;
 
   if (!has_eeprom && !has_sram && !has_flash1m && !has_flash5 &&
