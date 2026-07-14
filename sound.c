@@ -50,6 +50,38 @@ _Static_assert((16777216u + (65536u / 2u)) / 65536u == 256u,
 _Static_assert((u32)(68719476736ULL / 65536ULL) == 1048576u,
                "GBC_FREQ_STEP_NUM must still be 2^20 at gpSP's stock 65536Hz");
 
+/* The rate the game is actually clocking its Direct Sound FIFOs at, in Hz —
+ * which for an M4A game is the rate its software mixer renders at. 0 when no
+ * FIFO is being clocked (PSG-only, or sound off).
+ *
+ * A front-end wants this because the FIFO stream is upsampled from that rate
+ * to GBA_SOUND_FREQUENCY, and everything above rate/2 in the result is
+ * resampling images, not music. Real hardware hides them behind a PWM DAC and
+ * a small speaker; a clean 48 kHz DAC reproduces them faithfully, as grit.
+ * Knowing the rate lets the front-end put its low-pass where this game needs
+ * it instead of guessing.
+ *
+ * frequency_step is (cpu_clock << 24) / (out_rate * timer_reload) — see
+ * sound_update_frequency_step() — so rate = cpu_clock / timer_reload folds
+ * back out as (frequency_step * out_rate) >> 24. Only timers 0 and 1 can
+ * clock a FIFO. */
+extern timer_type timer[4];   /* main.c owns it; nothing exports it */
+
+u32 sound_fifo_rate_hz(void)
+{
+  u32 best = 0;
+  u32 i;
+  for (i = 0; i < 2; i++)
+  {
+    if (timer[i].status == TIMER_INACTIVE || timer[i].direct_sound_channels == 0)
+      continue;
+    u32 hz = (u32)(((u64)timer[i].frequency_step * GBA_SOUND_FREQUENCY) >> 24);
+    if (hz > best)
+      best = hz;
+  }
+  return best;
+}
+
 /* Queue 4 samples to the top of the DS FIFO, wrap around circularly */
 
 void sound_timer_queue32(u32 channel, u32 value)

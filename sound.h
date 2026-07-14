@@ -110,6 +110,7 @@ extern const u32 sound_frequency;
 extern u32 sound_on;
 
 void sound_timer_queue32(u32 channel, u32 value);
+u32 sound_fifo_rate_hz(void);
 unsigned sound_timer(fixed8_24 frequency_step, u32 channel);
 void sound_reset_fifo(u32 channel);
 void render_gbc_sound();
