@@ -20,6 +20,17 @@
 #include "common.h"
 #include <ctype.h>
 
+#ifdef GBA_M4A_HLE
+/* See cpu.cc for why these are declared and not included. */
+void m4a_hle_reset(void);
+void m4a_hle_scan_frame(void);
+#endif
+#ifdef M4A_HLE_VERIFY
+/* Counts everything that makes cpu_ticks advance for a reason that is NOT the
+ * block executing instructions: an interrupt taken, a DMA stall, a halt. */
+extern unsigned int m4a_irq_raises;
+#endif
+
 timer_type timer[4];
 
 u32 frame_counter = 0;
@@ -235,6 +246,14 @@ u32 function_cc update_gba(int remaining_cycles)
           // We completed a frame, tell the dynarec to exit to the main thread
           frame_complete = 0x80000000;
           frame_counter++;
+
+#ifdef GBA_M4A_HLE
+          /* Games copy their sound mixer into IWRAM during sound init, which has
+           * not happened on frame 0 — so look once a frame until it is there, and
+           * then stop looking. A memcmp over 32 KB, a handful of times, next to a
+           * whole emulated frame: free. */
+          m4a_hle_scan_frame();
+#endif
         }
 
         // Vcount trigger (flag) and IRQ if enabled
@@ -258,7 +277,18 @@ u32 function_cc update_gba(int remaining_cycles)
 
     // Raise any pending interrupts. This changes the CPU mode.
     if (check_and_raise_interrupts())
+    {
       changed_pc = 0x40000000;
+#ifdef M4A_HLE_VERIFY
+      /* Only the verify build cares. It compares what a block cost the
+       * interpreter against what it cost the native one — and the interpreter is
+       * cut into slices, so an interrupt can land in the middle of a block and
+       * charge its handler's cycles to the block. Counting the raises lets the
+       * comparison say "not this one" instead of quietly reporting a difference
+       * that is not the block's. */
+      m4a_irq_raises++;
+#endif
+    }
 
     // Figure out when we need to stop CPU execution. The next event is
     // a video event or a timer event, whatever happens first.
@@ -306,6 +336,11 @@ void reset_gba(void)
   init_main();
   init_cpu();
   reset_sound();
+#ifdef GBA_M4A_HLE
+  /* IWRAM is about to be rewritten from scratch, so the address we were hooking
+   * means nothing now. Forget it and look again. */
+  m4a_hle_reset();
+#endif
 }
 
 #ifdef TRACE_REGISTERS

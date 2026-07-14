@@ -22,6 +22,39 @@ extern "C" {
   #include "cpu_instrument.h"
 }
 
+#ifdef M4A_COUNT_INSNS
+extern "C" { extern unsigned long long m4a_insns_interpreted; }
+#endif
+
+#ifdef GBA_M4A_HLE
+/* The M4A mixer HLE. Declared here rather than included: its header is
+ * deliberately free of gpSP, so that the same file can be linked into the
+ * firmware, into the offline prover, and into a game whose bytes we have never
+ * seen — and be the same program in all three. tools/gba_m4a/ is the package. */
+extern "C" {
+  extern unsigned int m4a_hook_pc;        /* 0 until the mixer is found */
+  extern unsigned int m4a_hook_exit_pc;
+  int  m4a_hle_execute(unsigned int *regs, int *cycles, unsigned int *n,
+                       unsigned int *z, unsigned int *c, unsigned int *v);
+#ifdef M4A_HLE_VERIFY
+  void m4a_hle_verify_pre(const unsigned int *regs, int cycles, unsigned int n,
+                          unsigned int z, unsigned int c, unsigned int v);
+  void m4a_hle_verify_post(const unsigned int *regs, int cycles, unsigned int n,
+                           unsigned int z, unsigned int c, unsigned int v);
+  /* Everything that advances cpu_ticks without the block executing an
+   * instruction: an interrupt taken, a DMA stall, a halt. */
+  extern unsigned int m4a_irq_raises;
+  /* What the block cost the interpreter, counted the only way that is actually
+   * the block's: sum the cycles charged for instructions whose PC is INSIDE it.
+   * cpu_ticks cannot answer this — it also advances for DMA stalls and interrupt
+   * handlers that merely happened to land in the middle. */
+  extern unsigned int m4a_blk_cycles;
+  extern unsigned int m4a_blk_insns;
+  extern unsigned int m4a_blk_size;
+#endif
+}
+#endif
+
 const u8 bit_count[256] =
 {
   0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3,
@@ -1487,6 +1520,10 @@ void execute_arm(u32 cycles)
   s32 cycles_remaining;
   u32 update_ret;
   cpu_alert_type cpu_alert;
+#ifdef M4A_HLE_VERIFY
+  int m4a_in_block = 0;
+  s32 m4a_cyc_before = 0;
+#endif
 
   if(!pc_address_block)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
@@ -1495,8 +1532,21 @@ void execute_arm(u32 cycles)
   cycles_remaining = cycles;
   while(1)
   {
+#ifdef GBA_M4A_HLE
+cpu_loop_top:
+    /* Where the M4A HLE returns to after it has handed the hardware the cycles
+     * its block spent. Same place the loop's own `continue` lands. */
+#endif
     /* Do not execute until CPU is active */
     if (reg[CPU_HALT_STATE] != CPU_ACTIVE) {
+#ifdef M4A_HLE_VERIFY
+       /* The CPU is stalled — halted, or held off by a DMA. cpu_ticks keeps
+        * advancing while it is, so any block the stall lands inside will look
+        * like it cost more than it did. The verifier counts these so it can say
+        * "not this one" rather than report a difference that is not the
+        * block's. */
+       m4a_irq_raises++;
+#endif
        u32 ret = update_gba(cycles_remaining);
        if (completed_frame(ret))
           return;
@@ -1520,7 +1570,83 @@ arm_loop:
        if (reg[REG_PC] == cheat_master_hook)
           process_cheats();
 
+#ifdef GBA_M4A_HLE
+       /* M4A's software mixer, run natively instead of interpreted.
+        *
+        * Nearly every commercial GBA game mixes its PCM audio on the guest CPU,
+        * with an ARM routine the sound library copies into IWRAM at boot. On a
+        * microcontroller that one routine is the most expensive thing here — 37%
+        * of every guest instruction in Final Fantasy Tactics Advance, and a
+        * per-frame CONSTANT, because the music mixes the same amount of audio
+        * whatever is on screen.
+        *
+        * m4a_hle_execute() is a transliteration of the exact block, byte-matched
+        * before it is trusted: same arithmetic, same memory writes, and the same
+        * guest CYCLES, which are charged and not saved. The guest's timeline does
+        * not move; only the host's work does. It declines (0) on anything it is
+        * not sure of, and then we interpret the block as we always did.
+        *
+        * Resuming at m4a_resume, not skip_instruction, is deliberate: the block's
+        * last instruction has already paid its own fetch, and skip_instruction
+        * would charge it a second time — one cycle per block, which would show up
+        * as music that slowly drifts and nothing else. */
+#ifdef M4A_HLE_VERIFY
+       /* Verify build: let the INTERPRETER run the block, and remember the state
+        * it started from. The comparison happens at the exit PC below. */
+       if (reg[REG_PC] == m4a_hook_pc)
+          m4a_hle_verify_pre(reg, cycles_remaining, n_flag, z_flag, c_flag, v_flag);
+       if (m4a_hook_exit_pc && reg[REG_PC] == m4a_hook_exit_pc)
+          m4a_hle_verify_post(reg, cycles_remaining, n_flag, z_flag, c_flag, v_flag);
+
+       m4a_in_block = (m4a_hook_pc && reg[REG_PC] >= m4a_hook_pc &&
+                       reg[REG_PC] <  m4a_hook_pc + m4a_blk_size);
+       if (m4a_in_block) {
+          m4a_cyc_before = cycles_remaining;
+          m4a_blk_insns++;
+       }
+#else
+       if (reg[REG_PC] == m4a_hook_pc)
+       {
+          s32 m4a_cycles = cycles_remaining;
+          int m4a_rc = m4a_hle_execute(reg, &m4a_cycles,
+                                       &n_flag, &z_flag, &c_flag, &v_flag);
+          /* The block does its own cycle accounting and, when its budget runs out
+           * mid-way, calls update_gba() itself from exactly the instruction this
+           * loop would have stopped at. So there is nothing to reconcile here —
+           * only three ways out.
+           *
+           *   1  it finished          -> carry on at the block's exit
+           *   2  it gave way mid-block -> an interrupt, a halt or a DMA stall took
+           *                               the PC; the interpreter drives from there
+           *   3  the frame ended       -> return, exactly as this loop would
+           *   0  it declined           -> interpret the block, as if none of this
+           *                               were here */
+          if (m4a_rc == 1)
+          {
+             cycles_remaining = m4a_cycles;
+             reg[REG_PC] = m4a_hook_exit_pc;
+             goto m4a_resume;
+          }
+          if (m4a_rc == 2)
+          {
+             cycles_remaining = m4a_cycles;   /* PC was set by the block */
+             goto cpu_loop_top;
+          }
+          if (m4a_rc == 3)
+             return;
+       }
+#endif  /* M4A_HLE_VERIFY */
+#endif  /* GBA_M4A_HLE */
+
        /* Execute ARM instruction */
+#ifdef M4A_COUNT_INSNS
+       /* Guest instructions the INTERPRETER still has to decode and dispatch —
+        * which is what actually costs the device, at roughly seventy host
+        * instructions each. Host wall-clock is the wrong yardstick here: on an x86
+        * with a big cache, the PPU dominates and the interpreter looks cheap; on
+        * the Game & Watch it is the other way round. */
+       m4a_insns_interpreted++;
+#endif
        using_instruction(arm);
        check_pc_region();
        reg[REG_PC] &= ~0x03;
@@ -3060,6 +3186,17 @@ skip_instruction:
        /* End of Execute ARM instruction */
        cycles_remaining -= ws_cyc_seq[(reg[REG_PC] >> 24) & 0xF][1];
 
+#ifdef M4A_HLE_VERIFY
+       if (m4a_in_block)
+          m4a_blk_cycles += (unsigned int)(m4a_cyc_before - cycles_remaining);
+#endif
+
+#ifdef GBA_M4A_HLE
+m4a_resume:
+       /* The M4A HLE lands here, past the fetch charge above: it has already paid
+        * for every instruction it ran, including the last one's. */
+#endif
+
        if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
 
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
@@ -3078,6 +3215,9 @@ skip_instruction:
     {
 thumb_loop:
 
+#ifdef M4A_COUNT_INSNS
+       m4a_insns_interpreted++;
+#endif
        collapse_flags();
 
        /* Process cheats if we are about to execute the cheat hook */
