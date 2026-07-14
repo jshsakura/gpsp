@@ -3007,24 +3007,31 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
 
    load_game_config_over(game_code);
 
+   /* The cart, wherever it actually is. On a memory-mapped (XIP) build there are
+    * no gamepak_buffers at all — ROM_BUFFER_SIZE is 0 and load_gamepak_raw()
+    * returns before it allocates any — so gamepak_buffers[0] is NULL and every
+    * read below it would start at address 0. gamepak_header() is the accessor
+    * that knows this; use it, and nothing else, from here down. */
+   const u8 *rom_base = gamepak_header();
+
    if (backup_type_reset == BACKUP_UNKN)
    {
       u32 scan_size = gamepak_size < (1024*1024) ? gamepak_size : (1024*1024);
-      detect_backup_subcircuit(gamepak_buffers[0], scan_size);
+      detect_backup_subcircuit(rom_base, scan_size);
    }
 
    bool is_128k_flash = (backup_type_reset == BACKUP_FLASH && flash_bank_cnt == FLASH_SIZE_128KB);
-   bool is_pokemon_engine = rom_is_pokemon_family(gamepak_buffers[0]) || is_128k_flash;
+   bool is_pokemon_engine = rom_is_pokemon_family(rom_base) || is_128k_flash;
 
    require_m1_hle_bios = false;
-   
+
    bool title_altered = false;
    bool is_expanded = (gamepak_size > 16777216);
-   
-   if (rom_is_pokemon_family(gamepak_buffers[0]))
+
+   if (rom_is_pokemon_family(rom_base))
    {
       char title[13];
-      memcpy(title, &gamepak_buffers[0][0xA0], 12);
+      memcpy(title, &rom_base[0xA0], 12);
       title[12] = '\0';
       
       if (strncmp(title, "POKEMON FIRE", 12) != 0 &&
@@ -3050,7 +3057,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
       if (force_serial == SERIAL_MODE_AUTO)
          serial_mode = SERIAL_MODE_SERIAL_POKE;
    }
-   else if (!is_hack && rom_is_pokemon_family(gamepak_buffers[0]))
+   else if (!is_hack && rom_is_pokemon_family(rom_base))
    {
       if (flash_bank_cnt == FLASH_SIZE_128KB)
          rtc_enabled = true;
