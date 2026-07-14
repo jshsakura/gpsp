@@ -31,6 +31,25 @@ static u32 sound_buffer_base;
 
 static fixed16_16 gbc_sound_tick_step;
 
+/* The two PSG rates, as a function of the output sample rate rather than of the one
+ * gpSP happens to default to. Both used to be written as the constant they reduce to
+ * at 65536 Hz, which made every other rate silently wrong. The asserts below pin that
+ * reduction: at the stock rate these formulas must still produce exactly the numbers
+ * the old code did, or this is a regression rather than a fix.
+ *
+ * GBC_TICK_STEP      256 / sound_frequency, in 16.16   (the 256 Hz PSG frame timer)
+ * GBC_FREQ_STEP_NUM  131072*8*65536 / sound_frequency  (divide by (2048-rate) to use)
+ */
+#define GBC_TICK_STEP \
+  ((u32)((16777216u + (GBA_SOUND_FREQUENCY / 2u)) / GBA_SOUND_FREQUENCY))
+#define GBC_FREQ_STEP_NUM \
+  ((u32)(68719476736ULL / (u64)GBA_SOUND_FREQUENCY))
+
+_Static_assert((16777216u + (65536u / 2u)) / 65536u == 256u,
+               "GBC_TICK_STEP must still be 256 at gpSP's stock 65536Hz");
+_Static_assert((u32)(68719476736ULL / 65536ULL) == 1048576u,
+               "GBC_FREQ_STEP_NUM must still be 2^20 at gpSP's stock 65536Hz");
+
 /* Queue 4 samples to the top of the DS FIFO, wrap around circularly */
 
 void sound_timer_queue32(u32 channel, u32 value)
@@ -251,9 +270,19 @@ u32 gbc_sound_master_volume;
       }                                                                       \
                                                                               \
       /* (131072/(2048-rate))*8 / sound_frequency, in 16.16 fixed point.      \
-       * sound_frequency == 2^16 makes this exactly 2^20/(2048-rate).         \
-       * Verified bit-identical to the float form for rate 0..2047.           */ \
-      frequency_step = (fixed16_16)(1048576u / (2048 - rate));                \
+       * = 131072*8*65536 / ((2048-rate) * sound_frequency).                  \
+       *                                                                      \
+       * This USED to be written 2^20/(2048-rate), which is that formula with \
+       * sound_frequency folded in as the constant 65536 — true for gpSP's own \
+       * default and false for anything else. Built at 48000 Hz, as this      \
+       * firmware is, every PSG tone came out at 48000/65536 = 73% of its      \
+       * pitch: about five semitones flat, and flat only on the four legacy    \
+       * channels, while DirectSound stayed in tune. Music with both was       \
+       * simply wrong.                                                        \
+       *                                                                      \
+       * GBC_FREQ_STEP_NUM is the numerator with sound_frequency divided out   \
+       * at compile time, so this stays a 32-bit divide.                      */ \
+      frequency_step = (fixed16_16)(GBC_FREQ_STEP_NUM / (2048 - rate));       \
                                                                               \
       gs->frequency_step = frequency_step;                                    \
       gs->rate = rate;                                                        \
@@ -585,8 +614,11 @@ void reset_sound(void)
 
 void init_sound()
 {
-  /* 256 / sound_frequency in 16.16 == 256 (sound_frequency == 2^16). */
-  gbc_sound_tick_step = (fixed16_16)256u;
+  /* The 256 Hz PSG frame timer, in units of one output sample: 256/sound_frequency
+   * in 16.16 == 256*65536/sound_frequency. This too was written as the bare constant
+   * 256, which is that expression with sound_frequency assumed to be 65536 — so at
+   * 48000 Hz the envelopes, sweeps and note lengths all ran at 73% speed. */
+  gbc_sound_tick_step = (fixed16_16)GBC_TICK_STEP;
 
   init_noise_table(noise_table15, 32767, 14);
   init_noise_table(noise_table7, 127, 6);
