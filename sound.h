@@ -109,6 +109,31 @@ extern u32 gbc_sound_last_cpu_ticks;
 extern const u32 sound_frequency;
 extern u32 sound_on;
 
+/* The PSG frequency-step numerators, as a function of the output rate.
+ *
+ * These used to exist twice: once here (well, in sound.c) for the sweep path,
+ * and once over in gba_memory.c's I/O-write macros for note-on — as the
+ * constants they reduce to at gpSP's stock 65536 Hz (2^20 for tone, 2^21 for
+ * wave, 2^20/2^19 for noise). The sound.c copy was made rate-aware when the
+ * PSG played five semitones flat; the gba_memory.c copies were missed, so at
+ * 48 kHz every PSG NOTE-ON was 65536/48000 = 5.39 semitones SHARP, while a
+ * mid-note sweep snapped it back to true. PCM instruments were fine, which is
+ * why it presented as "only some instruments sound wrong". One definition,
+ * used by both files, so the two paths cannot disagree again.
+ *
+ * GBC_FREQ_STEP_NUM        131072*8*65536 / out_rate  (tone: /(2048-rate))
+ * GBC_WAVE_FREQ_STEP_NUM   2 x the above              (wave: /(2048-rate))
+ * GBC_NOISE_FREQ_STEP(...) the noise divider tree, 16.16
+ */
+#define GBC_FREQ_STEP_NUM \
+  ((u32)(68719476736ULL / (u64)GBA_SOUND_FREQUENCY))
+#define GBC_WAVE_FREQ_STEP_NUM \
+  ((u32)(137438953472ULL / (u64)GBA_SOUND_FREQUENCY))
+#define GBC_NOISE_FREQ_STEP_R0(shift) \
+  ((u32)((((u64)1048576u << 16) / GBA_SOUND_FREQUENCY) >> ((shift) + 1)))
+#define GBC_NOISE_FREQ_STEP(ratio, shift) \
+  ((u32)((((u64)524288u << 16) / ((u64)(ratio) * GBA_SOUND_FREQUENCY)) >> ((shift) + 1)))
+
 void sound_timer_queue32(u32 channel, u32 value);
 u32 sound_fifo_rate_hz(void);
 unsigned sound_timer(fixed8_24 frequency_step, u32 channel);

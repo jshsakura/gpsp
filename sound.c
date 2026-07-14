@@ -31,24 +31,31 @@ static u32 sound_buffer_base;
 
 static fixed16_16 gbc_sound_tick_step;
 
-/* The two PSG rates, as a function of the output sample rate rather than of the one
- * gpSP happens to default to. Both used to be written as the constant they reduce to
- * at 65536 Hz, which made every other rate silently wrong. The asserts below pin that
- * reduction: at the stock rate these formulas must still produce exactly the numbers
- * the old code did, or this is a regression rather than a fix.
+/* The PSG frame-timer rate, as a function of the output sample rate rather than
+ * of the one gpSP happens to default to. It used to be written as the constant
+ * it reduces to at 65536 Hz, which made every other rate silently wrong. The
+ * frequency-step numerators moved to sound.h so that gba_memory.c's note-on
+ * macros compute from the SAME definition as the sweep path below — they used
+ * to carry their own baked 65536 Hz reductions, and every PSG note-on came out
+ * 5.39 semitones sharp at 48 kHz. The asserts pin the 65536 Hz reductions: at
+ * the stock rate these formulas must still produce exactly the numbers the old
+ * code did, or this is a regression rather than a fix.
  *
  * GBC_TICK_STEP      256 / sound_frequency, in 16.16   (the 256 Hz PSG frame timer)
- * GBC_FREQ_STEP_NUM  131072*8*65536 / sound_frequency  (divide by (2048-rate) to use)
  */
 #define GBC_TICK_STEP \
   ((u32)((16777216u + (GBA_SOUND_FREQUENCY / 2u)) / GBA_SOUND_FREQUENCY))
-#define GBC_FREQ_STEP_NUM \
-  ((u32)(68719476736ULL / (u64)GBA_SOUND_FREQUENCY))
 
 _Static_assert((16777216u + (65536u / 2u)) / 65536u == 256u,
                "GBC_TICK_STEP must still be 256 at gpSP's stock 65536Hz");
 _Static_assert((u32)(68719476736ULL / 65536ULL) == 1048576u,
                "GBC_FREQ_STEP_NUM must still be 2^20 at gpSP's stock 65536Hz");
+_Static_assert((u32)(137438953472ULL / 65536ULL) == 2097152u,
+               "GBC_WAVE_FREQ_STEP_NUM must still be 2^21 at gpSP's stock 65536Hz");
+_Static_assert((u32)((((u64)1048576u << 16) / 65536u) >> (0 + 1)) == (1048576u >> 1),
+               "GBC_NOISE_FREQ_STEP_R0 must reduce to the old constant at 65536Hz");
+_Static_assert((u32)((((u64)524288u << 16) / (3ULL * 65536u)) >> (4 + 1)) == (524288u / (3u << 5)),
+               "GBC_NOISE_FREQ_STEP must reduce to the old formula at 65536Hz");
 
 /* The rate the game is actually clocking its Direct Sound FIFOs at, in Hz —
  * which for an M4A game is the rate its software mixer renders at. 0 when no

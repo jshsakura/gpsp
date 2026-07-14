@@ -43,8 +43,11 @@
   render_gbc_sound();                                                         \
   u32 rate = value & 0x7FF;                                                   \
   gbc_sound_channel[channel].rate = rate;                                     \
+  /* GBC_FREQ_STEP_NUM, not 2^20: the baked constant was the 65536 Hz         \
+   * reduction, and at 48 kHz it pitched every note-on 5.39 semitones sharp   \
+   * (sound.h tells the whole story). */                                      \
   gbc_sound_channel[channel].frequency_step =                                 \
-   (fixed16_16)(1048576u / (2048 - rate));                                    \
+   (fixed16_16)(GBC_FREQ_STEP_NUM / (2048 - rate));                           \
   gbc_sound_channel[channel].length_status = (value >> 14) & 0x01;            \
   if(value & 0x8000)                                                          \
   {                                                                           \
@@ -104,7 +107,7 @@ static const u32 gbc_sound_wave_volume[4] = { 0, 16384, 8192, 4096 };
   u32 rate = value & 0x7FF;                                                   \
   gbc_sound_channel[2].rate = rate;                                           \
   gbc_sound_channel[2].frequency_step =                                       \
-   (fixed16_16)(2097152u / (2048 - rate));                                    \
+   (fixed16_16)(GBC_WAVE_FREQ_STEP_NUM / (2048 - rate));                      \
   gbc_sound_channel[2].length_status = (value >> 14) & 0x01;                  \
   if(value & 0x8000)                                                          \
   {                                                                           \
@@ -122,12 +125,12 @@ static const u32 gbc_sound_wave_volume[4] = { 0, 16384, 8192, 4096 };
   if(dividing_ratio == 0)                                                     \
   {                                                                           \
     gbc_sound_channel[3].frequency_step =                                     \
-     (fixed16_16)(1048576u >> (frequency_shift + 1));                         \
+     (fixed16_16)GBC_NOISE_FREQ_STEP_R0(frequency_shift);                     \
   }                                                                           \
   else                                                                        \
   {                                                                           \
     gbc_sound_channel[3].frequency_step =                                     \
-     (fixed16_16)(524288u / (dividing_ratio << (frequency_shift + 1)));       \
+     (fixed16_16)GBC_NOISE_FREQ_STEP(dividing_ratio, frequency_shift);        \
   }                                                                           \
   gbc_sound_channel[3].noise_type = (value >> 3) & 0x01;                      \
   gbc_sound_channel[3].length_status = (value >> 14) & 0x01;                  \
