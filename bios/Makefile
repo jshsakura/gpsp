@@ -130,7 +130,8 @@ $(OUTPUT).elf	:	$(OFILES)
 %.bin: %.elf
 	@$(OBJCOPY) --pad-to 0x4000 -O binary $< $@
 	@echo built ... $(notdir $@)
- 
+	@python3 -c "p=__import__('pathlib').Path('$@'); d=p.read_bytes(); p.write_bytes(d+bytes(max(0,0x4000-len(d))))"
+	@cp $@ ../open_gba_bios.bin
 
 -include $(DEPENDS)
 

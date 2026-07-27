@@ -164,95 +164,16 @@ u32 umul3232H32(u32 val, u32 val2);
 extern int swi_Div(u32 a, u32 b); //Returns result
 
 /*-----------------------------------------------------------------
-0x27 - CustomHalt
-  Writes the 8bit parameter value to HALTCNT, below values are equivalent to Halt
-  and Stop/Sleep functions, other values reserved, purpose unknown.
-  8bit parameter (00h=Halt, 80h=Stop)
+0x27 / 0x02 / 0x03 - CustomHalt / Halt / Stop
+  Implemented in core.s. Must only use r2+ip like the official BIOS —
+  Metroid Fusion preserves r3 across Halt.
 -----------------------------------------------------------------*/
-void swi_CustomHalt(u8 val) {
-	HALTCNT = val;
-}
 
 /*-----------------------------------------------------------------
- 0x02 - Halt
-  Halts the CPU until an interrupt request occurs. The CPU is switched into low-power mode,
-  all other circuits (video, sound, timers, serial, keypad, system clock) are kept operating.
-  Halt mode is terminated when any enabled interrupts are requested, that is when (IE AND IF)
-  is not zero, the GBA locks up if that condition doesn't get true.
-  However, the state of CPUs IRQ disable bit in CPSR register, and the IME register are
-  don't care, Halt passes through even if either one has disabled interrupts.
+0x04 IntrWait / 0x05 VBlankIntrWait
+  Implemented in core.s (must match the official BIOS register/stack
+  layout — the old C versions softlocked Minish Cap's file select).
 -----------------------------------------------------------------*/
-void swi_Halt() {
-	swi_CustomHalt(0);
-}
-
-/*-----------------------------------------------------------------
-0x03 - Stop
-  Switches the GBA into very low power mode (to be used similar as a screen-saver).
-  The CPU, System Clock, Sound, Video, SIO-Shift Clock, DMAs, and Timers are stopped.
-  Stop state can be terminated by the following interrupts only
-  (as far as enabled in IE register): Joypad, Game Pak, or General-Purpose-SIO.
-
-  "The system clock is stopped so the IF flag is not set."
-  Preparation for Stop:
-  Disable Video before implementing Stop (otherwise Video just freezes, but still keeps consuming battery power).
-  Possibly required to disable Sound also? Obviously, it'd be also recommended to disable any external
-  hardware (such like Rumble or Infra-Red) as far as possible.
------------------------------------------------------------------*/
-void swi_Stop() {
-	swi_CustomHalt(0x80);
-}
-
-/*-----------------------------------------------------------------
-  Used by the IntrWait functions
------------------------------------------------------------------*/
-bool CheckInterrupts(u32 waitFlags)
-{
-	REG_IME = 0; //Disable interrupts
-	u16 intFlags = *(vu16*)(0x04000000-8); //Get current flags
-	u16 flags = intFlags & waitFlags;
-	if(flags)
-	{
-		intFlags = (flags) ^ intFlags;
-		*(vu16*)(0x04000000-8) = intFlags;
-	}
-	REG_IME = 1; //Enable interrupts
-	
-	return flags;
-}
-
-/*-----------------------------------------------------------------
-0x04 - IntrWait
-  Continues to wait in Halt state until one (or more) of the specified interrupt(s) do occur.
-  The function forcefully sets IME=1. When using multiple interrupts at the same time,
-  this function is having less overhead than repeatedly calling the Halt function
------------------------------------------------------------------*/
-void swi_IntrWait(bool discard, u32 waitFlags)
-{
-	if(discard)
-	{
-		CheckInterrupts(waitFlags);
-	}
-	
-	u32 val = 0;
-	do
-	{
-		HALTCNT = 0;
-		val = CheckInterrupts(waitFlags);
-	}
-	while(!val);
-}
-
-/*-----------------------------------------------------------------
-0x05 - VBlankIntrWait
-  Continues to wait in Halt state until one (or more) of the specified interrupt(s) do occur.
-  The function forcefully sets IME=1. When using multiple interrupts at the same time,
-  this function is having less overhead than repeatedly calling the Halt function
------------------------------------------------------------------*/
-void swi_VBlankIntrWait()
-{
-	swi_IntrWait(true,1);
-}
 
 /*-----------------------------------------------------------------
 0x06 - Div
@@ -1404,11 +1325,13 @@ void swi_MusicPlayerFadeOut(u32 dst)
   Receives pointers to 36 additional sound-related BIOS functions.
 -----------------------------------------------------------------*/
 extern void swi_Invalid();
+#define BIOS_IMAGE_BASE 0x08000000u
+
 void swi_SoundGetJumpList(u32 dst)
 {
-  //Dummy out the jump list by forcing all of them to return immediately
+  u32 stub = (u32)swi_Invalid - BIOS_IMAGE_BASE;
   for(int i = 0; i < 0x24; i++) {
-    CPUWriteMemory(dst, (u32)&swi_Invalid);
+    CPUWriteMemory(dst, stub);
     dst += 4;
   }
 }
