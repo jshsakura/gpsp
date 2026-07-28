@@ -55,6 +55,33 @@ extern "C" {
 }
 #endif
 
+#ifdef GBA_BIOS_HLE
+/* Host replacements for the common Nintendo BIOS SWIs (CpuSet, LZ77, Div…).
+ * Core/Src/porting/gba/gba_bios_hle.c — same idea as the M4A HLE: meaning on
+ * the host, guest cycles charged. SoftReset / Halt / IntrWait stay in BIOS. */
+extern "C" int gba_bios_hle(unsigned number, unsigned *regs, int *cycles);
+
+/* Apply a guest-cycle cost. Anything that does not fit the current slice parks
+ * the CPU in CPU_DMA sleep (same path as an immediate DMA), so update_gba keeps
+ * advancing video and timers while the "BIOS" appears to run. */
+#define gba_bios_hle_charge(cost_)                                            \
+  do {                                                                        \
+    int _c = (cost_);                                                         \
+    if (_c <= 0)                                                              \
+      break;                                                                  \
+    if (_c >= cycles_remaining) {                                             \
+      _c -= cycles_remaining;                                                 \
+      cycles_remaining = 0;                                                   \
+      if (_c > 0) {                                                           \
+        reg[CPU_HALT_STATE] = CPU_DMA;                                        \
+        reg[REG_SLEEP_CYCLES] = 0x80000000u | (u32)_c;                        \
+      }                                                                       \
+    } else {                                                                  \
+      cycles_remaining -= _c;                                                 \
+    }                                                                         \
+  } while (0)
+#endif
+
 const u8 bit_count[256] =
 {
   0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3,
@@ -3171,6 +3198,16 @@ arm_loop:
 
           case 0xF0 ... 0xFF:
             collapse_flags();
+#ifdef GBA_BIOS_HLE
+            {
+              int bios_cost = 0;
+              if (gba_bios_hle((opcode >> 16) & 0xFF, reg, &bios_cost)) {
+                reg[REG_PC] += 4;
+                gba_bios_hle_charge(bios_cost);
+                break;
+              }
+            }
+#endif
             reg[REG_BUS_VALUE] = 0xe3a02004;  // After SWI, we read bios[0xE4]
             REG_MODE(MODE_SUPERVISOR)[6] = reg[REG_PC] + 4;
             REG_SPSR(MODE_SUPERVISOR) = reg[REG_CPSR];
@@ -3671,6 +3708,16 @@ thumb_loop:
 
           case 0xDF:
              collapse_flags();
+#ifdef GBA_BIOS_HLE
+             {
+               int bios_cost = 0;
+               if (gba_bios_hle(opcode & 0xFF, reg, &bios_cost)) {
+                 reg[REG_PC] += 2;
+                 gba_bios_hle_charge(bios_cost);
+                 break;
+               }
+             }
+#endif
              REG_MODE(MODE_SUPERVISOR)[6] = reg[REG_PC] + 2;
              REG_SPSR(MODE_SUPERVISOR) = reg[REG_CPSR];
              reg[REG_PC] = 0x00000008;
